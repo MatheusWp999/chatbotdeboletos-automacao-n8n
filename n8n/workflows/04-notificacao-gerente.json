@@ -1,0 +1,184 @@
+{
+  "name": "04 - Notificacao para Gerente",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "Exec_Trigger",
+      "name": "Quando Executado",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -980,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.nome, c.numero_whatsapp FROM contatos c LEFT JOIN boletos b ON b.contato_id = c.id AND b.mes_referencia = TO_CHAR(NOW(), 'YYYY-MM') WHERE c.tipo = 'cliente' AND b.id IS NULL ORDER BY c.nome;"
+      },
+      "id": "Pg_Clientes_Sem_Boleto",
+      "name": "Clientes Sem Boleto",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -740,
+        140
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.nome, b.mes_referencia, b.arquivo_nome FROM boletos b JOIN contatos c ON c.id = b.contato_id WHERE b.status = 'pendente' ORDER BY b.criado_em DESC;"
+      },
+      "id": "Pg_Boletos_Pendentes",
+      "name": "Boletos Pendentes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -740,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "language": "JavaScript",
+        "jsCode": "const original = $item(0).$node['Quando Executado'].json;\nconst semBoleto = $item(0).$node['Clientes Sem Boleto'].json;\nconst pendentes = $item(0).$node['Boletos Pendentes'].json;\nlet mensagem = 'Relatorio Operacional\\n\\n';\nmensagem += 'Clientes SEM boleto cadastrado este mes:\\n';\nif (!semBoleto.length) {\n  mensagem += '- Todos os clientes possuem boleto cadastrado.\\n';\n} else {\n  semBoleto.forEach((c) => {\n    mensagem += `- ${c.nome}\\n`;\n  });\n}\nmensagem += '\\nBoletos aguardando envio:\\n';\nif (!pendentes.length) {\n  mensagem += 'Nenhum boleto pendente.';\n} else {\n  pendentes.forEach((b) => {\n    mensagem += `- ${b.nome} (${b.mes_referencia})\\n`;\n  });\n}\nreturn [{json: { ...original, mensagem }}];"
+      },
+      "id": "Code_Montar_Relatorio",
+      "name": "Montar Relatorio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{$json.contato.numero_whatsapp}}\",\n  \"text\": \"{{$json.mensagem}}\"\n}"
+      },
+      "id": "Http_Enviar_Gerente",
+      "name": "Enviar para Gerente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -260,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO alertas_gerentes (gerente_id, tipo_alerta, conteudo) VALUES ({{$json.contato.id}}, 'relatorio_operacional', {{$json.mensagem}});"
+      },
+      "id": "Pg_Log_Alerta",
+      "name": "Log Alerta Gerente",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -20,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Quando Executado": {
+      "main": [
+        [
+          {
+            "node": "Clientes Sem Boleto",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Boletos Pendentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clientes Sem Boleto": {
+      "main": [
+        [
+          {
+            "node": "Montar Relatorio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Boletos Pendentes": {
+      "main": [
+        [
+          {
+            "node": "Montar Relatorio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Relatorio": {
+      "main": [
+        [
+          {
+            "node": "Enviar para Gerente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar para Gerente": {
+      "main": [
+        [
+          {
+            "node": "Log Alerta Gerente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {},
+  "active": false
+}

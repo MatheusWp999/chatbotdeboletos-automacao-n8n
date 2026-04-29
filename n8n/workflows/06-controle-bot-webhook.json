@@ -1,0 +1,83 @@
+{
+  "name": "06 - Controle do Bot (Liga/Desliga)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "bot-control",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "Webhook_Bot_Control",
+      "name": "Webhook Bot Control",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -780,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE contatos SET bot_ativo = {{$json.body.bot_ativo}}, atualizado_em = NOW() WHERE id = {{$json.body.contato_id}};"
+      },
+      "id": "Pg_Update_Bot",
+      "name": "Atualizar Bot Ativo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -500,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"success\": true }",
+        "options": {}
+      },
+      "id": "Responder",
+      "name": "Responder Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -240,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Bot Control": {
+      "main": [
+        [
+          {
+            "node": "Atualizar Bot Ativo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Atualizar Bot Ativo": {
+      "main": [
+        [
+          {
+            "node": "Responder Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {},
+  "active": false
+}

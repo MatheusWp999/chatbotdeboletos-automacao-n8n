@@ -1,0 +1,243 @@
+{
+  "name": "05 - Agendador de Boletos (Cron)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 5 * *"
+            }
+          ]
+        }
+      },
+      "id": "Cron_Mensal",
+      "name": "Cron Dia 5 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -980,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT b.id AS boleto_id, c.nome, c.numero_whatsapp FROM boletos b JOIN contatos c ON c.id = b.contato_id WHERE b.mes_referencia = TO_CHAR(NOW(), 'YYYY-MM') AND b.status = 'pendente' AND c.bot_ativo = true ORDER BY b.criado_em ASC;"
+      },
+      "id": "Pg_Boletos_Pendentes",
+      "name": "Buscar Boletos Pendentes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -740,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "Split_In_Batches",
+      "name": "Processar Um a Um",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -500,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "03-enviar-boleto",
+        "jsonParameters": true,
+        "input": "={{ { \"boleto_id\": $json.boleto_id } }}",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "Exec_Enviar_Boleto",
+      "name": "Executar Envio Boleto",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        -260,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 3,
+        "unit": "seconds"
+      },
+      "id": "Wait_3s",
+      "name": "Aguardar 3s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, nome, numero_whatsapp FROM contatos WHERE tipo = 'gerente' AND bot_ativo = true ORDER BY nome;"
+      },
+      "id": "Pg_Gerentes",
+      "name": "Buscar Gerentes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        220,
+        380
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "language": "JavaScript",
+        "jsCode": "const count = $item(0).$node['Buscar Boletos Pendentes'].json.length;\nreturn $json.map((gerente) => ({ json: { gerente, count } }));"
+      },
+      "id": "Code_Montar_Resumo",
+      "name": "Montar Resumo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{$json.gerente.numero_whatsapp}}\",\n  \"text\": \"Envio de boletos iniciado. {{$json.count}} boletos disparados.\"\n}"
+      },
+      "id": "Http_Notificar_Gerente",
+      "name": "Notificar Gerente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        380
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Dia 5 09:00": {
+      "main": [
+        [
+          {
+            "node": "Buscar Boletos Pendentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Boletos Pendentes": {
+      "main": [
+        [
+          {
+            "node": "Processar Um a Um",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar Um a Um": {
+      "main": [
+        [
+          {
+            "node": "Executar Envio Boleto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Buscar Gerentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executar Envio Boleto": {
+      "main": [
+        [
+          {
+            "node": "Aguardar 3s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar 3s": {
+      "main": [
+        [
+          {
+            "node": "Processar Um a Um",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Gerentes": {
+      "main": [
+        [
+          {
+            "node": "Montar Resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Resumo": {
+      "main": [
+        [
+          {
+            "node": "Notificar Gerente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {},
+  "active": false
+}

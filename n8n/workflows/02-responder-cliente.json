@@ -1,0 +1,331 @@
+{
+  "name": "02 - Responder Cliente",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "Exec_Trigger",
+      "name": "Quando Executado por Outro Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1080,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM configuracao_bot WHERE ativo = true ORDER BY atualizado_em DESC LIMIT 1;"
+      },
+      "id": "Pg_Config",
+      "name": "Buscar Config Bot",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -860,
+        140
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM boletos WHERE contato_id = {{$json.contato.id}} AND mes_referencia = TO_CHAR(NOW(), 'YYYY-MM') AND status = 'pendente' ORDER BY criado_em DESC LIMIT 1;"
+      },
+      "id": "Pg_Boleto_Pendente",
+      "name": "Buscar Boleto Pendente",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -860,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "JavaScript",
+        "jsCode": "const original = $item(0).$node['Quando Executado por Outro Workflow'].json;\nconst configRows = $item(0).$node['Buscar Config Bot'].json;\nconst boletoRows = $item(0).$node['Buscar Boleto Pendente'].json;\nconst config = configRows[0] || {};\nconst regras = `\nREGRAS OBRIGATORIAS:\n1. Voce APENAS responde sobre os topicos explicitamente descritos acima.\n2. Se a pergunta estiver fora do seu escopo, responda EXATAMENTE:\n\"Nao tenho essa informacao. Para duvidas adicionais, entre em contato com nossa equipe.\"\n3. NUNCA invente valores de boletos, datas de vencimento ou informacoes bancarias.\n4. NUNCA confirme pagamentos ou de quitacao de dividas.\n5. NUNCA forneca dados de outros clientes.\n6. Se nao tiver certeza sobre algo, diga que nao sabe e oriente o cliente a falar com a equipe.\n7. Mantenha respostas curtas e diretas. Maximo 3 paragrafos.\n`;\nconst systemPrompt = `${config.system_prompt || 'Voce e um assistente financeiro.'}\n\n${config.instrucoes_restricao || ''}\n\n${regras}`;\nreturn [{json: {\n  ...original,\n  config,\n  boletoPendente: boletoRows[0] || null,\n  systemPrompt\n}}];"
+      },
+      "id": "Code_Montar_Prompt",
+      "name": "Montar Prompt Final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -620,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.OPENAI_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0.2,\n  \"max_tokens\": 350,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"{{$json.systemPrompt}}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{$json.mensagem}}\"\n    }\n  ]\n}"
+      },
+      "id": "Http_OpenAI",
+      "name": "Gerar Resposta OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -380,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "language": "JavaScript",
+        "jsCode": "const origem = $item(0).$node['Montar Prompt Final'].json;\nconst resposta = $json.choices?.[0]?.message?.content || 'Nao tenho essa informacao. Para duvidas adicionais, entre em contato com nossa equipe.';\nreturn [{json: { ...origem, resposta }}];"
+      },
+      "id": "Code_Extrair_Resposta",
+      "name": "Extrair Texto Resposta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{$json.numero}}\",\n  \"text\": \"{{$json.resposta}}\"\n}"
+      },
+      "id": "Http_Enviar_Texto",
+      "name": "Enviar Resposta WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        80,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.boletoPendente !== null}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "id": "If_Tem_Boleto",
+      "name": "Tem Boleto Pendente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        320,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "id": "Wait_2s",
+      "name": "Aguardar 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        560,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "03-enviar-boleto",
+        "jsonParameters": true,
+        "options": {
+          "waitForSubWorkflow": false
+        },
+        "input": "={{ { \"boleto_id\": $json.boletoPendente.id } }}"
+      },
+      "id": "Exec_WF_Enviar_Boleto",
+      "name": "Executar WF Enviar Boleto",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        800,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mensagens (contato_id, direcao, conteudo, tipo) VALUES ({{$json.contato.id}}, 'saida', {{$json.resposta}}, 'texto');"
+      },
+      "id": "Pg_Log_Saida",
+      "name": "Log Mensagem Saida",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        560,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Quando Executado por Outro Workflow": {
+      "main": [
+        [
+          {
+            "node": "Buscar Config Bot",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Buscar Boleto Pendente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Config Bot": {
+      "main": [
+        [
+          {
+            "node": "Montar Prompt Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Boleto Pendente": {
+      "main": [
+        [
+          {
+            "node": "Montar Prompt Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Prompt Final": {
+      "main": [
+        [
+          {
+            "node": "Gerar Resposta OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar Resposta OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Extrair Texto Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Texto Resposta": {
+      "main": [
+        [
+          {
+            "node": "Enviar Resposta WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Resposta WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Tem Boleto Pendente?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Mensagem Saida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem Boleto Pendente?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar 2s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Aguardar 2s": {
+      "main": [
+        [
+          {
+            "node": "Executar WF Enviar Boleto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {},
+  "active": false
+}

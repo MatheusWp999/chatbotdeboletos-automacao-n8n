@@ -1,0 +1,234 @@
+{
+  "name": "03 - Enviar Boleto",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "Exec_Trigger",
+      "name": "Quando Executado",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -980,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT b.*, c.numero_whatsapp, c.nome FROM boletos b JOIN contatos c ON c.id = b.contato_id WHERE b.id = {{$json.boleto_id}} LIMIT 1;"
+      },
+      "id": "Pg_Buscar_Boleto",
+      "name": "Buscar Boleto",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -740,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "filePath": "={{$json[0].arquivo_path}}"
+      },
+      "id": "Read_PDF",
+      "name": "Ler Arquivo PDF",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT mensagem_boleto_template FROM configuracao_bot WHERE ativo = true ORDER BY atualizado_em DESC LIMIT 1;"
+      },
+      "id": "Pg_Config",
+      "name": "Buscar Template",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -500,
+        360
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "language": "JavaScript",
+        "jsCode": "const boleto = $item(0).$node['Buscar Boleto'].json[0];\nconst config = $item(0).$node['Buscar Template'].json[0] || {};\nconst binary = $binary.data.data;\nconst template = config.mensagem_boleto_template || 'Ola, {{nome}}. Segue seu boleto de {{mes}}.';\nconst caption = template.replace(/\\{\\{nome\\}\\}/g, boleto.nome).replace(/\\{\\{mes\\}\\}/g, boleto.mes_referencia);\nreturn [{json: { boleto, caption, base64: binary }}];"
+      },
+      "id": "Code_Caption_Base64",
+      "name": "Montar Caption e Base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendMedia/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{$json.boleto.numero_whatsapp}}\",\n  \"mediatype\": \"document\",\n  \"mimetype\": \"application/pdf\",\n  \"caption\": \"{{$json.caption}}\",\n  \"media\": \"{{$json.base64}}\",\n  \"fileName\": \"{{$json.boleto.arquivo_nome}}\"\n}"
+      },
+      "id": "Http_Enviar_PDF",
+      "name": "Enviar PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -20,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE boletos SET status = 'enviado', enviado_em = NOW() WHERE id = {{$json.boleto.id}};"
+      },
+      "id": "Pg_Update_Status",
+      "name": "Atualizar Status Boleto",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        220,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mensagens (contato_id, direcao, conteudo, tipo, arquivo_path) VALUES ({{$json.boleto.contato_id}}, 'saida', {{$json.caption}}, 'documento', {{$json.boleto.arquivo_path}});"
+      },
+      "id": "Pg_Log_Documento",
+      "name": "Log Documento",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        220,
+        280
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Quando Executado": {
+      "main": [
+        [
+          {
+            "node": "Buscar Boleto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Boleto": {
+      "main": [
+        [
+          {
+            "node": "Ler Arquivo PDF",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Buscar Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Arquivo PDF": {
+      "main": [
+        [
+          {
+            "node": "Montar Caption e Base64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Template": {
+      "main": [
+        [
+          {
+            "node": "Montar Caption e Base64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Caption e Base64": {
+      "main": [
+        [
+          {
+            "node": "Enviar PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar PDF": {
+      "main": [
+        [
+          {
+            "node": "Atualizar Status Boleto",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {},
+  "active": false
+}

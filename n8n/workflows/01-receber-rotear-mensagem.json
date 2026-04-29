@@ -1,0 +1,351 @@
+{
+  "name": "01 - Receber e Rotear Mensagem",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "whatsapp",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "Webhook_Entrada",
+      "name": "Webhook WhatsApp",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1180,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "language": "JavaScript",
+        "jsCode": "const payload = $json.body || $json;\nconst data = payload.data || {};\nconst key = data.key || {};\nconst messageObj = data.message || {};\nconst msg = messageObj.conversation || messageObj.extendedTextMessage?.text || '';\nconst remote = (key.remoteJid || '').replace('@s.whatsapp.net', '');\nreturn [{\n  json: {\n    numero: remote.replace(/\\D/g, ''),\n    mensagem: msg,\n    tipo_mensagem: data.messageType || '',\n    eh_meu: Boolean(key.fromMe),\n    raw: payload\n  }\n}];"
+      },
+      "id": "Code_Extrair",
+      "name": "Extrair Campos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -940,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.eh_meu}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "id": "If_Mensagem_Do_Bot",
+      "name": "Ignorar Se fromMe",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM contatos WHERE numero_whatsapp = {{$json.numero}} LIMIT 1;"
+      },
+      "id": "Pg_Buscar_Contato",
+      "name": "Buscar Contato",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -500,
+        340
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.length}}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "If_Contato_Existe",
+      "name": "Contato Encontrado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.EVOLUTION_API_URL}}/message/sendText/{{$env.EVOLUTION_INSTANCE_NAME}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.EVOLUTION_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{$node['Extrair Campos'].json.numero}}\",\n  \"text\": \"Ola! Voce nao esta cadastrado em nosso sistema.\"\n}"
+      },
+      "id": "Http_Nao_Cadastrado",
+      "name": "Responder Nao Cadastrado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -20,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "language": "JavaScript",
+        "jsCode": "const contato = $json[0];\nif (!contato) return [{json: {}}];\nreturn [{json: { ...$node['Extrair Campos'].json, contato }}];"
+      },
+      "id": "Code_Normalizar_Contato",
+      "name": "Normalizar Contato",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -20,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.contato.bot_ativo}}",
+              "operation": "isFalse"
+            }
+          ]
+        }
+      },
+      "id": "If_Bot_Ativo",
+      "name": "Bot Esta Desligado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        220,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.contato.tipo}}",
+              "operation": "equals",
+              "value2": "gerente"
+            }
+          ]
+        }
+      },
+      "id": "If_Eh_Gerente",
+      "name": "Contato e Gerente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "04-notificacao-gerente",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "Exec_Notificacao_Gerente",
+      "name": "Executar WF Gerente",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        700,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "02-responder-cliente",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "Exec_Responder_Cliente",
+      "name": "Executar WF Cliente",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        700,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mensagens (contato_id, direcao, conteudo, tipo) VALUES ({{$json.contato.id}}, 'entrada', {{$json.mensagem}}, 'texto');"
+      },
+      "id": "Pg_Log_Entrada",
+      "name": "Log Mensagem Entrada",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        940,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PG_BOT_BOLETOS",
+          "name": "Postgres Bot Boletos"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Extrair Campos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Campos": {
+      "main": [
+        [
+          {
+            "node": "Ignorar Se fromMe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ignorar Se fromMe": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Buscar Contato",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Contato": {
+      "main": [
+        [
+          {
+            "node": "Contato Encontrado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contato Encontrado?": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Contato",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Nao Cadastrado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Contato": {
+      "main": [
+        [
+          {
+            "node": "Bot Esta Desligado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bot Esta Desligado?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Contato e Gerente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contato e Gerente?": {
+      "main": [
+        [
+          {
+            "node": "Executar WF Gerente",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Mensagem Entrada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Executar WF Cliente",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Mensagem Entrada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {},
+  "active": false
+}
